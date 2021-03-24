@@ -325,6 +325,8 @@ def randomScale(bgr, boxes):
     return bgr, boxes
 ```
 
+除补全方法之外，也将所有的数据预处理方法提取为`yoloDataset`之外的静态函数。
+
 ---
 
 ## 网络训练与测试

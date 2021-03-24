@@ -1,4 +1,6 @@
-import cv2
+import os
+
+import cv2 as cv
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -48,7 +50,8 @@ def decoder(pred):
     contain1 = pred[:, :, 4].unsqueeze(2)
     contain2 = pred[:, :, 9].unsqueeze(2)
     contain = torch.cat((contain1, contain2), 2)
-    mask1 = contain > 0.1  # 大于阈值
+    # mask1 = contain > 0.1  # 大于阈值
+    mask1 = contain > 0.2  # 大于阈值
     mask2 = contain == contain.max()  # we always select the best contain_prob what ever it>0.9
     mask = (mask1 + mask2).gt(0)
     # min_score,min_index = torch.min(contain,2) #每个cell只选最大概率的那个预测框
@@ -171,10 +174,10 @@ def nms_(bboxes, scores, threshold=0.5):
 #
 def predict_gpu(model, image_name, root_path=''):
     result = []
-    image = cv2.imread(root_path + image_name)
+    image = cv.imread(root_path + image_name)
     h, w, _ = image.shape
-    img = cv2.resize(image, (448, 448))
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv.resize(image, (448, 448))
+    img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
     mean = (123, 117, 104)  # RGB
     img = img - np.array(mean, dtype=np.float32)
 
@@ -183,7 +186,7 @@ def predict_gpu(model, image_name, root_path=''):
     # img = Variable(img[None, :, :, :], volatile=True)
     with torch.no_grad():
         img = Variable(img[None, :, :, :])
-    # img = img.cuda()
+    img = img.cuda()
 
     pred = model(img)  # 1x7x7x30
     pred = pred.cpu()
@@ -205,26 +208,32 @@ def predict_gpu(model, image_name, root_path=''):
 
 
 if __name__ == '__main__':
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     model = resnet50()
+    model.cuda()
     print('load model...')
     model.load_state_dict(torch.load('best.pth', map_location='cpu'))
     model.eval()
     # model.cpu()
-    image_name = '../../data/VOC2007/JPEGImages/0000178.jpg'
-    image = cv2.imread(image_name)
+
+    image_name = 'JPEGImages/0000190.jpg'
+    image = cv.imread(image_name)
     print('predicting...')
     result = predict_gpu(model, image_name)
     print(result)
+
     for left_up, right_bottom, class_name, _, prob in result:
         color = Color[CLASSES.index(class_name)]
-        cv2.rectangle(image, left_up, right_bottom, color, 2)
-        label = class_name + str(round(prob, 2))
-        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-        p1 = (left_up[0], left_up[1] - text_size[1])
-        cv2.rectangle(image, (p1[0] - 2 // 2, p1[1] - 2 - baseline),
-                      (p1[0] + text_size[0], p1[1] + text_size[1]),
-                      color, -1)
-        cv2.putText(image, label, (p1[0], p1[1] + baseline),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, 8)
+        cv.rectangle(image, left_up, right_bottom, color, 2)
 
-    cv2.imwrite('result.jpg', image)
+        label = class_name + str(round(prob, 2))
+        text_size, baseline = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        p1 = (left_up[0], left_up[1] - text_size[1])
+
+        cv.rectangle(image, (p1[0] - 2 // 2, p1[1] - 2 - baseline),
+                     (p1[0] + text_size[0], p1[1] + text_size[1]),
+                     color, -1)
+        cv.putText(image, label, (p1[0], p1[1] + baseline),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, 8)
+
+    cv.imwrite('result.jpg', image)
