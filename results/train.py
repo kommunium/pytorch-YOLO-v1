@@ -12,13 +12,14 @@ from yoloLoss import yoloLoss
 
 if __name__ == '__main__':
 
+
     # use_gpu = torch.cuda.is_available()
     use_gpu = True
 
-    file_root = '../../data/VOC2007/JPEGImages/'
+    file_root = 'JPEGImages/'
     learning_rate = 0.001
-    num_epochs = 10
-    batch_size = 1
+    num_epochs = 50
+    batch_size = 2
     use_resnet = True
     if use_resnet:
         net = resnet50()
@@ -85,15 +86,25 @@ if __name__ == '__main__':
     # optimizer = torch.optim.Adam(net.parameters(),lr=learning_rate,weight_decay=1e-4)
 
     train_dataset = yoloDataset(root=file_root,
-                                list_file='../../data/VOC2007/label_train.txt',
+                                list_file='label_train.txt',
                                 train=True,
                                 transform=[transforms.ToTensor()])
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_dataset,
+                              batch_size=batch_size,
+                              shuffle=True,
+                              num_workers=4,
+                              pin_memory=True)
+
     test_dataset = yoloDataset(root=file_root,
-                               list_file='../../data/VOC2007/label_test.txt',
+                               list_file='label_test.txt',
                                train=False,
                                transform=[transforms.ToTensor()])
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset,
+                             batch_size=batch_size,
+                             shuffle=False,
+                             num_workers=4,
+                             pin_memory=True)
+
     print('the dataset has %d images' % len(train_dataset))
     print('the batch_size is %d' % batch_size)
     logfile = open('log.txt', 'w')
@@ -105,15 +116,16 @@ if __name__ == '__main__':
     for epoch in range(num_epochs):
         net.train()
         # if epoch == 1:
-        #     learning_rate = 0.0005
+        #     learning_rate = 0.005
         # if epoch == 2:
-        #     learning_rate = 0.00075
+        #     learning_rate = 0.002
         # if epoch == 3:
         #     learning_rate = 0.001
         if epoch == 30:
             learning_rate = 0.0001
         if epoch == 40:
             learning_rate = 0.00001
+            # learning_rate = 0.0001
         # optimizer = torch.optim.SGD(net.parameters(),lr=learning_rate*0.1,momentum=0.9,weight_decay=1e-4)
         for param_group in optimizer.param_groups:
             param_group['lr'] = learning_rate
@@ -146,7 +158,7 @@ if __name__ == '__main__':
                 # vis.plot_train_val(loss_train=total_loss/(i+1))
             torch.cuda.empty_cache()
         # validation
-        validation_loss = 0.0
+        validation_loss = .0
         net.eval()
         torch.cuda.empty_cache()
         for i, (images, target) in enumerate(test_loader):
@@ -173,4 +185,3 @@ if __name__ == '__main__':
         logfile.flush()
         torch.save(net.state_dict(), 'yolo.pth')
         torch.cuda.empty_cache()
-
