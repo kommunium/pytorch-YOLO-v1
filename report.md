@@ -62,13 +62,6 @@ with open('label_train.txt', 'w') as fw:
             fw.write(data.strip() + '\n')
 ```
 
-```python
-asdasd
-
-adasda'\n'
-
-```
-
 其中，190条样本用以训练，剩余10条样本用以测试。
 
 ---
@@ -119,7 +112,9 @@ def encoder(self, boxes, labels):
 
 ---
 
-### 修复图片文件无法读取的问题
+### ~~修复图片文件无法读取的问题~~
+
+>该问题由错误的标注格式引起，后已修正。
 
 此时运行网络训练，将会出现报错：
 
@@ -157,15 +152,15 @@ AttributeError: 'NoneType' object has no attribute 'shape'
 等等。以上错误均出现在数据预处理环节，因各预处理执行与否为随机，因此错误也将随机出现。以上两个问题均是由图片路径为空造成，为此，在调用数据预处理方法代码前设置断点：
 
 ```python
->>> if self.train:
-        img, boxes = self.random_flip(img, boxes)
-        img, boxes = self.randomScale(img, boxes)
-        img = self.randomBlur(img)
-        img = self.RandomBrightness(img)
-        img = self.RandomHue(img)
-        img = self.RandomSaturation(img)
-        img, boxes, labels = self.randomShift(img, boxes, labels)
-        img, boxes, labels = self.randomCrop(img, boxes, labels)
+>> > if self.train:
+  img, boxes = random_flip(img, boxes)
+  img, boxes = randomScale(img, boxes)
+  img = randomBlur(img)
+  img = RandomBrightness(img)
+  img = RandomHue(img)
+  img = RandomSaturation(img)
+  img, boxes, labels = randomShift(img, boxes, labels)
+  img, boxes, labels = randomCrop(img, boxes, labels)
 ```
 
 通过debugger观察到，此时，图片文件名变量`fname`值为`{str} '0'`，且`yoloDataset`对象成员变量`fnames`值为`{list: 180} ['0', ..., '0']`，读取到的图片`image`也为`None`。在对象的初始化方法中，`fnames`被初始化为
@@ -292,6 +287,44 @@ F.mse_loss(torch.sqrt(box_pred_response[:, 2:4].clamp(min=0)),
 
 ### 补全数据预处理方法
 
+依照原作者提交的源代码，补全数据预处理方法如下。
+
+随机饱和度：
+
+```python
+def RandomSaturation(bgr):
+    if random.random() < 0.5:
+        hsv = BGR2HSV(bgr)
+        h, s, v = cv.split(hsv)
+        adjust = random.choice([0.5, 1.5])
+        s *= adjust
+        s = np.clip(s, 0, 255).astype(hsv.dtype)
+        hsv = cv.merge((h, s, v))
+        bgr = HSV2BGR(hsv)
+    return bgr
+```
+
+随机模糊：
+
+```python
+def randomBlur(bgr):
+    return cv.blur(bgr, (5,) * 2) if random.random() < 0.5 else bgr
+```
+
+随机形变：
+
+```python
+def randomScale(bgr, boxes):
+    # fix height, scale width from 0.8 to 1.2
+    if random.random() < 0.5:
+        scale = random.uniform(0.8, 1.2)
+        height, width, c = bgr.shape
+        bgr = cv.resize(bgr, (int(width * scale), height))
+        scale_tensor = torch.FloatTensor([[scale, 1] * 2]).expand_as(boxes)
+        boxes *= scale_tensor
+    return bgr, boxes
+```
+
 ---
 
 ## 网络训练与测试
@@ -300,7 +333,12 @@ F.mse_loss(torch.sqrt(box_pred_response[:, 2:4].clamp(min=0)),
 
 - 硬件
   - 中央处理器：AMD Ryzen 7 3800X，8核16线程，标称3.89GHz，运行在4.20GHz
-  - 图形处理器（训练）：NVIDIA GeForce GTX 1650，4G独立显存，连接到PCIe 4.0
+  - 图形处理器（训练）：ASUS TUF Gaming GeForce® GTX 1650 超频版
+    - 4GB GDDR6显存，带宽12Gbps，位宽128位
+    - 加速频率1680MHz
+    - 896枚CUDA核心
+    - 采用图灵架构
+    - 连接到PCIe 4.0
   - 图形处理器（推理）：NVIDIA GeForce GTX 950，2G独立显存
   - 内存：光威深渊DDR4，标称3000MHz，运行在3000MHz，双16GB构成双通道，总32GB
   - 主板：华硕TUF Gaming Plus X570 WiFi
@@ -400,8 +438,8 @@ boxes, cls_indices, probs = decoder(pred)
 
 针对欠拟合现象，适当提高学习率，作如下调整：
 
-- 学习率仍初始化为`0.001`
-- 在第`30`个epoch后，学习率仍保持在`0.001`
+- 学习率仍初始化为`0.005`
+- 在第`30`个epoch后，学习率下降至`0.001`
 - 在第`40`个epoch后，学习率下降至`0.0001`
 
 下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果。可见，识别效果仍然不尽如人意，甚至相较于第一次训练出现了更多的重复识别边缘的现象。在测试集上，效果也类似。
@@ -432,3 +470,5 @@ mask1 = contain > 0.2
 ---
 <!-- TODO 需要补全每次训练的loss，改进eva方法 -->
 >至此，需要考虑通过在训练时认为加入噪声，以提升网络的预测能力。
+
+### 结合数据预处理进行网络训练
