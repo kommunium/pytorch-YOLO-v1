@@ -1,18 +1,24 @@
-# YOLO-v1 网络调试、训练与测试
+# YOLO-v1网络调试、训练与测试
+
+本报告由深港微电子学院黄冠超（学号11912309）贡献，所有相关的资源，包括源代码、数据集与报告可在[我的GitHub仓库](https://github.com/kommunium/pytorch-YOLO-v1)获取。
+
+基于[@abeardear](https://github.com/abeardear)提交在[abeardear/pytorch-YOLO-v1 仓库](https://github.com/abeardear/pytorch-YOLO-v1)中的源代码。
 
 [toc]
 
-## 网络源代码调试
+## ~~合并标注文件（缺少预处理）~~
 
-### 合并标注文件
+>依照原本的要求，物体及其位置标注应当从`labels`目录下的`.txt`文件中合并后读取，但随后证实其中的数据与网络训练不匹配，需要进行预处理，否则将导致模型完全失效，无法进行预测。
+>
+>前期调试时，所使用的无效的标注数据可能导致诸如数值错误等未可预料的异常，在[源代码调试](#网络源代码调试)中，部分错误可能实际上由错误的标注数据所引发。
 
 通过文件读写合并标注数据文件。
 
 ```python
-path = '../../data/VOC2007/'
+path = 'labels/'
 with open(path + 'label_train.txt', 'w') as fw:
     for i in range(1, 201):
-        file_name = path + 'labels/' + str(i).rjust(7, '0') + '.txt'
+        file_name = path + str(i).rjust(7, '0') + '.txt'
         with open(file_name, 'r') as fr:
             for line in fr.readlines():
                 fw.write(line.strip() + ' ')
@@ -29,9 +35,51 @@ y2 = float(split[4 + 5 * i])
 c = split[0 + 5 * i]
 ```
 
+---
+
+## 合并标注文件
+
+>重构了脚本，以实现对标注的预处理，并适应网络的输入格式。
+
+```python
+path = "labels/"
+with open('label_train.txt', 'w') as fw:
+    for i in range(1, 201):
+        file_name = str(i).rjust(7, '0')
+        data = file_name + '.jpg '
+        with open(path + file_name + '.txt', 'r') as fr:
+            for line in fr.readlines():
+                obj = line.strip().split(' ')
+                c = obj[0]
+                obj = list(map(float, obj[1:]))
+                x1 = round((obj[0] - .5 * obj[2]) * 640)
+                y1 = round((obj[1] - .5 * obj[3]) * 480)
+                x2 = round((obj[0] + .5 * obj[2]) * 640)
+                y2 = round((obj[1] + .5 * obj[3]) * 480)
+                data += '{} {} {} {} {} '.format(x1, y1, x2, y2, c)
+
+
+            fw.write(data.strip() + '\n')
+```
+
+```python
+asdasd
+
+adasda'\n'
+
+```
+
+其中，190条样本用以训练，剩余10条样本用以测试。
+
+---
+
+## 网络源代码调试
+
+>如无特别说明，以下调试均在[标注数据未进行预处理](#合并标注文件（缺少预处理）)条件下进行，因此部分错误可能实际上由错误的数据标注所引发。
+
 ### 格式化代码
 
-原作者的代码中充斥大量typo、重复代码、单行代码过长、在 `docstring` 中使用单引号等不符合 `The Zen of Python` 的代码片段，且均没有进行格式化。为提升代码可读性，有必要进行相应的修复和优化。
+原作者的代码中含有大量typo、重复代码、单行代码过长、在`docstring`中使用单引号等不符合`The Zen of Python`的代码片段，且均没有进行格式化。为提升代码可读性，有必要进行相应的修复和优化。
 
 ### 补全`yoloDataset.encoder()`方法
 
@@ -246,13 +294,14 @@ F.mse_loss(torch.sqrt(box_pred_response[:, 2:4].clamp(min=0)),
 
 ---
 
-## 网络训练
+## 网络训练与测试
 
 ### 训练平台
 
 - 硬件
   - 中央处理器：AMD Ryzen 7 3800X，8核16线程，标称3.89GHz，运行在4.20GHz
-  - 图形处理器：NVIDIA GeForce GTX 1650，4G独立显存，连接到PCIe 4.0
+  - 图形处理器（训练）：NVIDIA GeForce GTX 1650，4G独立显存，连接到PCIe 4.0
+  - 图形处理器（推理）：NVIDIA GeForce GTX 950，2G独立显存
   - 内存：光威深渊DDR4，标称3000MHz，运行在3000MHz，双16GB构成双通道，总32GB
   - 主板：华硕TUF Gaming Plus X570 WiFi
   - 驱动器：三星SSD 980 Pro，连接到PCIe 4.0
@@ -261,16 +310,34 @@ F.mse_loss(torch.sqrt(box_pred_response[:, 2:4].clamp(min=0)),
   - PyCharm Professional 2020.3
   - Anaconda 3中的Python 3.8.8
   - PyTorch 1.8.0
-  - CUDA 11.1
+  - CUDA 11.2
   - 其余相关包均已更新至最新版本
 
-### 训练耗时
+### 训练配置
 
-在不进行数据预处理时，针对180个样本进行学习，耗时273409毫秒，约4.56分钟。
+>由于GeForce GTX 1650同时作为训练平台的显示输出，需要驱动一台4K与一台2K显示器，其在空载情况下占用显存已达`0.8GB`左右，本就不大的显存愈发吃紧。经过反复测试，为避免出现显存溢出，同时尽可能优化训练效果，设定以下初始训练参数：
 
-## 网络测试
+- 在初始化`DataLoader`时加入`pin_memory=True`参数
+- batch大小设置为`2`
+- 学习率初始化为`0.001`
+- 在第`30`个epoch后，学习率下降至`0.0001`
+- 在第`40`个epoch后，学习率下降至`0.00001`
+- 共训练`50`个epoch。
 
-### `predict.py`调试
+在训练过程中，偶发性出现在运行多个epoch后，在某处batch结束后训练不再继续，进程也不退出。经查，此类问题往往与进程互锁有关。此项目中均采用``OpenCV`包进行数据读取，其多线程并发引起锁死的概率较大。为避免对工程进行完全重构，只需将`OpenCV`的多线程关闭即可。在`yoloDataset.__init__()`中，添加如下代码：
+
+```python
+cv.setNumThreads(0)
+cv.ocl.setUseOpenCL(False)
+```
+
+此时训练可正常进行，效率并未受到大的影响。
+
+>就机器学习而言，相较于`OpenCV`，`PIL`（`Pillow`）包往往更受推荐，因其可避免进程互锁问题，并且在`DataLoader`的数据预处理中更具灵活性。
+
+### 测试配置
+
+>出于充分利用计算资源的考量，将网络推理放置在GeForce GTX 950上运行。
 
 为了正常进行预测，需要对预测程序入口`predict.py`文件进行必要修改。
 
@@ -301,12 +368,67 @@ CLASSES = ('part', 'center', 'side')
 result.append([(x1, y1), (x2, y2), CLASSES[cls_index], image_name, prob])
 ```
 
-#### 解决不能正确输出预测结果的问题
+#### ~~解决不能正确输出预测结果的问题~~
 
-执行脚本进行推理，发现输出的图片中并未给出任何分类、定位方框与文字。此时，程序输出的`result = predict_gpu(model, image_name, root_path=root_path)`的值始终为`{list: 1} [[(0, 0), (0, 0), 'part', '<filename>', 0.0]]`，换言之，没有侦测到物体以及定位框。进一步向前回溯，`predict_gpu()`方法中，网络的直接推理结果`pred = model(img)`中的值均为有实际意义的数值，而非空或零，而随后的`boxes`、`cls_indices`与`probs`均为零。因此，需要对`decoder()`方法进行调试。
+>该问题后证实为数据标注错误所引起。
+
+执行脚本进行推理，发现输出的图片中并未给出任何分类、定位方框与文字。此时，程序输出的`result = predict_gpu(model, image_name, root_path=root_path)`的值始终为`{list: 1} [[(0, 0), (0, 0), 'part', '<filename>', 0.0]]`，换言之，没有侦测到物体以及定位框。
+
+<!-- 进一步向前回溯，`predict_gpu()`方法中，网络的直接推理结果`pred = model(img)`中的值均为有实际意义的数值，而非空或零，而随后的`boxes`、`cls_indices`与`probs`均为零。因此，需要对`decoder()`方法进行调试。
 
 ```python
 pred = model(img)  # 1x7x7x30
 pred = pred.cpu()
 boxes, cls_indices, probs = decoder(pred)
+``` -->
+
+---
+
+### 无预处理条件下训练
+
+#### 第一次训练（无预处理、50代）
+
+以初始训练设置进行训练，在不进行数据预处理时，针对190个样本进行学习，耗时1308030毫秒，约合21.80分钟。
+
+>在关闭风扇时，GPU的满负荷运行温度达到80℃；而风扇全速运转时，下降至约50℃，可见风扇启停对GPU性能与训练效率有重要影响。
+
+依照[网络测试](#网络测试)中的设置进行预测，下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果，测试集上的效果也类似。可见，虽然整体效果较好，但其常将零件的中心识别为零件主题，仍有欠拟合现象。
+
+![Training 1, no preprocess, underfitting](results/no-pre-underfit.jpg)
+
+#### 第二次训练（无预处理、50代、提高学习率）
+
+针对欠拟合现象，适当提高学习率，作如下调整：
+
+- 学习率仍初始化为`0.001`
+- 在第`30`个epoch后，学习率仍保持在`0.001`
+- 在第`40`个epoch后，学习率下降至`0.0001`
+
+下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果。可见，识别效果仍然不尽如人意，甚至相较于第一次训练出现了更多的重复识别边缘的现象。在测试集上，效果也类似。
+
+![训练2，无预处理](results/result_2.jpg)
+
+#### 第三次训练（无预处理、100代）
+
+进一步增加epoch至100代，网络训练耗时观察预测结果。
+
+下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果。
+
+![训练3，阈值为0.1，190号样本](results/result_3_1.jpg)
+
+可见，出现了大量错误的物体识别。将检测阈值从`0.1`提高至`0.2`，得到结果如下：
+
+```python
+# mask1 = contain > 0.1
+mask1 = contain > 0.2
 ```
+
+![训练3，阈值为0.2，190号样本](results/result_3_2.jpg)
+
+但是，在测试集上，仍有错误产生。
+
+![训练3，阈值为0.2，200号样本](results/result_3_3.jpg)
+
+---
+<!-- TODO 需要补全每次训练的loss，改进eva方法 -->
+>至此，需要考虑通过在训练时认为加入噪声，以提升网络的预测能力。
