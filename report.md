@@ -2,9 +2,11 @@
 
 本报告由深港微电子学院黄冠超（学号11912309）贡献，所有相关的资源，包括源代码、数据集与报告可在[我的GitHub仓库](https://github.com/kommunium/pytorch-YOLO-v1)获取。
 
-基于[@abeardear](https://github.com/abeardear)提交在[abeardear/pytorch-YOLO-v1 仓库](https://github.com/abeardear/pytorch-YOLO-v1)中的源代码。
+基于[@abeardear](https://github.com/abeardear)提交在[abeardear/pytorch-YOLO-v1 仓库](https://github.com/abeardear/pytorch-YOLO-v1)中的源代码，利用YOLO-v1网络，实现对零件的主体、边缘、中心的预测与定位。
 
 [toc]
+
+![理想结果](42_detc.jpg)
 
 ## ~~合并标注文件（缺少预处理）~~
 
@@ -327,6 +329,25 @@ def randomScale(bgr, boxes):
 
 除补全方法之外，也将所有的数据预处理方法提取为`yoloDataset`之外的静态函数。
 
+### 解决引入数据预处理所引发的问题
+
+引入数据预处理方法后，在训练中产生了新的问题，Python抛出大量异常，进度条也不能正常显示。
+
+```powershell
+Traceback (most recent call last):
+  File "C:\ProgramData\Anaconda3\lib\multiprocessing\queues.py", line 239, in _feed
+    obj = _ForkingPickler.dumps(obj)
+  File "C:\ProgramData\Anaconda3\lib\multiprocessing\reduction.py", line 51, in dumps
+    cls(buf, protocol).dump(obj)
+_pickle.PicklingError: Can't pickle <class 'numpy.core._exceptions.UFuncTypeError'>: it's not the same object as numpy.core._exceptions.UFuncTypeError
+```
+
+由于未提示异常具体由哪一行源代码抛出，因此只能逐行检查。通过设置断点发现，影响训练进程的代码为随机饱和度预处理。而其他的预处理方法都能正常执行。
+
+```python
+img = RandomSaturation(img)
+```
+
 ---
 
 ## 网络训练与测试
@@ -414,35 +435,47 @@ result.append([(x1, y1), (x2, y2), CLASSES[cls_index], image_name, prob])
 
 执行脚本进行推理，发现输出的图片中并未给出任何分类、定位方框与文字。此时，程序输出的`result = predict_gpu(model, image_name, root_path=root_path)`的值始终为`{list: 1} [[(0, 0), (0, 0), 'part', '<filename>', 0.0]]`，换言之，没有侦测到物体以及定位框。
 
-<!-- 进一步向前回溯，`predict_gpu()`方法中，网络的直接推理结果`pred = model(img)`中的值均为有实际意义的数值，而非空或零，而随后的`boxes`、`cls_indices`与`probs`均为零。因此，需要对`decoder()`方法进行调试。
+---
+
+#### 解决非零重载被废弃的用户警告
+
+运行预测，Python抛出用户警告：
+
+```powershell
+C:/Users/Guanc/Documents/GitHub/pytorch-YOLO-v1/predict.py:165: UserWarning: This overload of nonzero is deprecated:
+ nonzero()
+Consider using one of the following signatures instead:
+ nonzero(*, bool as_tuple) (Triggered internally at  ..\torch\csrc\utils\python_arg_parser.cpp:882.)
+ idx = (iou <= threshold).nonzero().squeeze()
+```
+
+依照提示修改参数：
 
 ```python
-pred = model(img)  # 1x7x7x30
-pred = pred.cpu()
-boxes, cls_indices, probs = decoder(pred)
-``` -->
-
----
+idx = (iou <= threshold).nonzero(as_tuple=False).squeeze()
+```
 
 ### 无预处理条件下训练
 
 #### 第一次训练（无预处理、50代）
 
-以初始训练设置进行训练，在不进行数据预处理时，针对190个样本进行学习，耗时1308030毫秒，约合21.80分钟。
+以初始训练设置进行训练，在不进行数据预处理时，针对190个样本进行学习，耗时1308030毫秒，约合21.80分钟，在训练集上得到的平均损失为`9.90`。
 
 >在关闭风扇时，GPU的满负荷运行温度达到80℃；而风扇全速运转时，下降至约50℃，可见风扇启停对GPU性能与训练效率有重要影响。
 
 依照[网络测试](#网络测试)中的设置进行预测，下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果，测试集上的效果也类似。可见，虽然整体效果较好，但其常将零件的中心识别为零件主题，仍有欠拟合现象。
 
-![Training 1, no preprocess, underfitting](results/no-pre-underfit.jpg)
+![训练1，无预处理，欠拟合](results/no-pre-underfit.jpg)
 
 #### 第二次训练（无预处理、50代、提高学习率）
 
 针对欠拟合现象，适当提高学习率，作如下调整：
 
-- 学习率仍初始化为`0.005`
+- 学习率初始化为`0.005`
 - 在第`30`个epoch后，学习率下降至`0.001`
 - 在第`40`个epoch后，学习率下降至`0.0001`
+
+经训练，最后在测试集上获得的平均损失下降至`8.45`.
 
 下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果。可见，识别效果仍然不尽如人意，甚至相较于第一次训练出现了更多的重复识别边缘的现象。在测试集上，效果也类似。
 
@@ -450,7 +483,7 @@ boxes, cls_indices, probs = decoder(pred)
 
 #### 第三次训练（无预处理、100代）
 
-进一步增加epoch至100代，网络训练耗时观察预测结果。
+进一步增加epoch至100代，降低学习率为`0.001`在测试集上获得的损失反而上升至`9.96`，观察预测结果。
 
 下图为对训练集的最后一个样本`0000190.jpg`进行预测的结果。
 
@@ -469,8 +502,27 @@ mask1 = contain > 0.2
 
 ![训练3，阈值为0.2，200号样本](results/result_3_3.jpg)
 
----
-<!-- TODO 需要补全每次训练的loss，改进eva方法 -->
 >至此，需要考虑通过在训练时认为加入噪声，以提升网络的预测能力。
 
+---
+
 ### 结合数据预处理进行网络训练
+
+#### 第四次训练（预处理，80代）
+
+在引入了图片预处理后，对模型进行训练。
+
+- 学习率初始化为`0.005`
+- 在第`40`个epoch后，学习率下降至`0.001`
+
+总训练用时2144026毫秒，约合35.73分钟，在测试集上得到平均损失为`2.78`。
+
+![训练4，190号样本](results/result_4.jpg)
+
+总的来讲，虽然此时效果已较之前三次训练有大的提升，但仍然存在边界识别重复、混淆零件主体和零件中心的问题。
+
+---
+
+## 总结
+
+通过对源代码的大量调试，以及对训练、推理参数的试错优化，成功实现了网络的训练、预测全流程，效果较好，但仍不能达到为完美，有待进一步的优化。

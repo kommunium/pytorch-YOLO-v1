@@ -50,8 +50,8 @@ def decoder(pred):
     contain1 = pred[:, :, 4].unsqueeze(2)
     contain2 = pred[:, :, 9].unsqueeze(2)
     contain = torch.cat((contain1, contain2), 2)
-    # mask1 = contain > 0.1  # 大于阈值
-    mask1 = contain > 0.2  # 大于阈值
+    mask1 = contain > 0.1  # 大于阈值
+    # mask1 = contain > 0.2  # 大于阈值
     mask2 = contain == contain.max()  # we always select the best contain_prob what ever it>0.9
     mask = (mask1 + mask2).gt(0)
     # min_score,min_index = torch.min(contain,2) #每个cell只选最大概率的那个预测框
@@ -162,7 +162,7 @@ def nms_(bboxes, scores, threshold=0.5):
         inter = (xx2 - xx1).clamp(min=0) * (yy2 - yy1).clamp(min=0)  # [N-1,]
 
         iou = inter / (areas[i] + areas[order[1:]] - inter)  # [N-1,]
-        idx = (iou <= threshold).nonzero().squeeze()  # 注意此时idx为[N-1,] 而order为[N,]
+        idx = (iou <= threshold).nonzero(as_tuple=False).squeeze()  # 注意此时idx为[N-1,] 而order为[N,]
         if idx.numel() == 0:
             break
         order = order[idx + 1]  # 修补索引之间的差值
@@ -185,8 +185,7 @@ def predict_gpu(model, image_name, root_path=''):
     img = transform(img)
     # img = Variable(img[None, :, :, :], volatile=True)
     with torch.no_grad():
-        img = Variable(img[None, :, :, :])
-    img = img.cuda()
+        img = Variable(img[None, :, :, :]).cuda()
 
     pred = model(img)  # 1x7x7x30
     pred = pred.cpu()
@@ -199,10 +198,9 @@ def predict_gpu(model, image_name, root_path=''):
         x2 = int(box[2] * w)
         y1 = int(box[1] * h)
         y2 = int(box[3] * h)
-        cls_index = cls_indexs[i]
-        cls_index = int(cls_index)  # convert LongTensor to int
-        prob = probs[i]
-        prob = float(prob)
+        # convert LongTensor to int
+        cls_index = int(cls_indexs[i])
+        prob = float(probs[i])
         result.append([(x1, y1), (x2, y2), CLASSES[cls_index], image_name, prob])
     return result
 

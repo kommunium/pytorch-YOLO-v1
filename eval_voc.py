@@ -5,14 +5,8 @@
 import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-import numpy as np
 
-VOC_CLASSES = (  # always index 0
-    'aeroplane', 'bicycle', 'bird', 'boat',
-    'bottle', 'bus', 'car', 'cat', 'chair',
-    'cow', 'diningtable', 'dog', 'horse',
-    'motorbike', 'person', 'pottedplant',
-    'sheep', 'sofa', 'train', 'tvmonitor')
+CLASSES = ('Part', 'Center', 'Side')
 Color = [[0, 0, 0],
          [128, 0, 0],
          [0, 128, 0],
@@ -48,7 +42,7 @@ def voc_ap(rec, prec, use_07_metric=False):
             ap = ap + p / 11.
 
     else:
-        # correct ap caculation
+        # correct ap calculation
         mrec = np.concatenate(([0.], rec, [1.]))
         mpre = np.concatenate(([0.], prec, [0.]))
 
@@ -62,13 +56,13 @@ def voc_ap(rec, prec, use_07_metric=False):
     return ap
 
 
-def voc_eval(preds, target, VOC_CLASSES=VOC_CLASSES, threshold=0.5, use_07_metric=False, ):
-    '''
+def voc_eval(preds, target, VOC_CLASSES=CLASSES, threshold=0.5, use_07_metric=False, ):
+    """
     preds {'cat':[[image_id,confidence,x1,y1,x2,y2],...],'dog':[[],...]}
     target {(image_id,class):[[],]}
-    '''
+    """
     aps = []
-    for i, class_ in enumerate(VOC_CLASSES):
+    for i, class_ in enumerate(CLASSES):
         pred = preds[class_]  # [[image_id,confidence,x1,y1,x2,y2],...]
         if len(pred) == 0:  # 如果这个类别一个都没有检测到的异常情况
             ap = -1
@@ -108,8 +102,8 @@ def voc_eval(preds, target, VOC_CLASSES=VOC_CLASSES, threshold=0.5, use_07_metri
                     ih = np.maximum(iymax - iymin + 1., 0.)
                     inters = iw * ih
 
-                    union = (bb[2] - bb[0] + 1.) * (bb[3] - bb[1] + 1.) + (bbgt[2] - bbgt[0] + 1.) * (
-                                bbgt[3] - bbgt[1] + 1.) - inters
+                    union = (bb[2] - bb[0] + 1.) * (bb[3] - bb[1] + 1.) + \
+                            (bbgt[2] - bbgt[0] + 1.) * (bbgt[3] - bbgt[1] + 1.) - inters
                     if union == 0:
                         print(bb, bbgt)
 
@@ -144,8 +138,9 @@ def test_eval():
 
 
 if __name__ == '__main__':
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     # test_eval()
-    from predict_raw import *
+    from predict import *
     from collections import defaultdict
     from tqdm import tqdm
 
@@ -153,13 +148,14 @@ if __name__ == '__main__':
     preds = defaultdict(list)
     image_list = []  # image path list
 
-    f = open('voc2007test.txt')
+    f = open('label_test.txt')
     lines = f.readlines()
     file_list = []
     for line in lines:
-        splited = line.strip().split()
-        file_list.append(splited)
+        split = line.strip().split()
+        file_list.append(split)
     f.close()
+
     print('---prepare target---')
     for index, image_file in enumerate(file_list):
         image_id = image_file[0]
@@ -172,8 +168,9 @@ if __name__ == '__main__':
             x2 = int(image_file[3 + 5 * i])
             y2 = int(image_file[4 + 5 * i])
             c = int(image_file[5 + 5 * i])
-            class_name = VOC_CLASSES[c]
+            class_name = CLASSES[c]
             target[(image_id, class_name)].append([x1, y1, x2, y2])
+
     #
     # start test
     #
@@ -193,15 +190,18 @@ if __name__ == '__main__':
     model.eval()
     model.cuda()
     count = 0
+
     for image_path in tqdm(image_list):
+        # result[[left_up,right_bottom,class_name,image_path],]
         result = predict_gpu(model, image_path,
-                             root_path='/home/xzh/data/VOCdevkit/VOC2012/allimgs/')  # result[[left_up,right_bottom,class_name,image_path],]
-        for (x1, y1), (x2, y2), class_name, image_id, prob in result:  # image_id is actually image_path
+                             root_path='JPEGImages/')
+        # image_id is actually image_path
+        for (x1, y1), (x2, y2), class_name, image_id, prob in result:
             preds[class_name].append([image_id, prob, x1, y1, x2, y2])
         # print(image_path)
         # image = cv2.imread('/home/xzh/data/VOCdevkit/VOC2012/allimgs/'+image_path)
-        # for left_up,right_bottom,class_name,_,prob in result:
-        #     color = Color[VOC_CLASSES.index(class_name)]
+        # for left_up,right_bottom,class_name,_,prob idn result:
+        #     color = Color[CLASSES.index(class_name)]
         #     cv2.rectangle(image,left_up,right_bottom,color,2)
         #     label = class_name+str(round(prob,2))
         #     text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
@@ -215,4 +215,4 @@ if __name__ == '__main__':
         #     break
 
     print('---start evaluate---')
-    voc_eval(preds, target, VOC_CLASSES=VOC_CLASSES)
+    voc_eval(preds, target, VOC_CLASSES=CLASSES)

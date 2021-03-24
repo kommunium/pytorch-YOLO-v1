@@ -12,13 +12,15 @@ from yoloLoss import yoloLoss
 
 if __name__ == '__main__':
 
-
+    loss_eva = False
+    model_path = 'model_3-5.pth'
     # use_gpu = torch.cuda.is_available()
     use_gpu = True
 
     file_root = 'JPEGImages/'
     learning_rate = 0.001
-    num_epochs = 50
+    # learning_rate = 0.
+    num_epochs = 80
     batch_size = 2
     use_resnet = True
     if use_resnet:
@@ -65,8 +67,8 @@ if __name__ == '__main__':
                 print('yes')
                 dd[k] = new_state_dict[k]
         net.load_state_dict(dd)
-    if False:
-        net.load_state_dict(torch.load('best.pth'))
+    if loss_eva:
+        net.load_state_dict(torch.load(model_path))
     # print('cuda', torch.cuda.current_device(), torch.cuda.device_count())
 
     criterion = yoloLoss(7, 2, 5, 0.5, use_gpu)
@@ -113,6 +115,7 @@ if __name__ == '__main__':
     # vis = Visualizer(env='./visdom_train')
     best_test_loss = np.inf
 
+    loss_sum = 0.
     for epoch in range(num_epochs):
         net.train()
         # if epoch == 1:
@@ -121,10 +124,10 @@ if __name__ == '__main__':
         #     learning_rate = 0.002
         # if epoch == 3:
         #     learning_rate = 0.001
-        if epoch == 30:
-            learning_rate = 0.0001
         if epoch == 40:
-            learning_rate = 0.00001
+            learning_rate = 0.001
+        # if epoch == 40:
+        #     learning_rate = 0.001
             # learning_rate = 0.0001
         # optimizer = torch.optim.SGD(net.parameters(),lr=learning_rate*0.1,momentum=0.9,weight_decay=1e-4)
         for param_group in optimizer.param_groups:
@@ -174,6 +177,7 @@ if __name__ == '__main__':
             validation_loss += loss.detach()
             torch.cuda.empty_cache()
         validation_loss /= len(test_loader)
+        loss_sum += validation_loss
 
         # vis.plot_train_val(loss_val=validation_loss)
 
@@ -185,3 +189,4 @@ if __name__ == '__main__':
         logfile.flush()
         torch.save(net.state_dict(), 'yolo.pth')
         torch.cuda.empty_cache()
+    print('the average loss is {}'.format(loss_sum / num_epochs))

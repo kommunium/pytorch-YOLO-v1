@@ -37,11 +37,12 @@ def RandomBrightness(bgr):
 
 
 def RandomSaturation(bgr):
-    if random.random() < 0.5:
+    # if random.random() < 0.5:
+    if True:
         hsv = BGR2HSV(bgr)
         h, s, v = cv.split(hsv)
         adjust = random.choice([0.5, 1.5])
-        s *= adjust
+        s = s.astype(float) * adjust
         s = np.clip(s, 0, 255).astype(hsv.dtype)
         hsv = cv.merge((h, s, v))
         bgr = HSV2BGR(hsv)
@@ -255,18 +256,18 @@ class yoloDataset(data.Dataset):
         boxes = self.boxes[idx].clone()
         labels = self.labels[idx].clone()
 
-        # if self.train:
-        #     img, boxes = self.random_flip(img, boxes)
-        #     img, boxes = self.randomScale(img, boxes)
-        #     img = self.randomBlur(img)
-        #     img = self.RandomBrightness(img)
-        #     img = self.RandomHue(img)
-        #     img = self.RandomSaturation(img)
-        #     img, boxes, labels = self.randomShift(img, boxes, labels)
-        #     img, boxes, labels = self.randomCrop(img, boxes, labels)
+        if self.train:
+            img, boxes = random_flip(img, boxes)
+            img, boxes = randomScale(img, boxes)
+            img = randomBlur(img)
+            img = RandomBrightness(img)
+            img = RandomHue(img)
+            img = RandomSaturation(img)
+            img, boxes, labels = randomShift(img, boxes, labels)
+            img, boxes, labels = randomCrop(img, boxes, labels)
 
         h, w, _ = img.shape
-        boxes /= torch.Tensor([w, h, w, h]).expand_as(boxes)
+        boxes /= torch.Tensor([w, h] * 2).expand_as(boxes)
         cv.cvtColor(img, cv.COLOR_BGR2RGB)
         # img = self.BGR2RGB(img)  # because pytorch pretrained model use RGB
         img = subMean(img, self.mean)  # subtract the mean value
