@@ -12,10 +12,210 @@ import torch
 import torch.utils.data as data
 
 
+def BGR2HSV(img):
+    return cv.cvtColor(img, cv.COLOR_BGR2HSV)
+
+
+def HSV2BGR(img):
+    return cv.cvtColor(img, cv.COLOR_HSV2BGR)
+
+
+def BGR2RGB(img):
+    return cv.cvtColor(img, cv.COLOR_BGR2RGB)
+
+
+def RandomBrightness(bgr):
+    if random.random() < 0.5:
+        hsv = BGR2HSV(bgr)
+        h, s, v = cv.split(hsv)
+        adjust = random.choice([0.5, 1.5])
+        v = v * adjust
+        v = np.clip(v, 0, 255).astype(hsv.dtype)
+        hsv = cv.merge((h, s, v))
+        bgr = HSV2BGR(hsv)
+    return bgr
+
+
+def RandomSaturation(bgr):
+    if random.random() < 0.5:
+        hsv = BGR2HSV(bgr)
+        h, s, v = cv.split(hsv)
+        adjust = random.choice([0.5, 1.5])
+        s *= adjust
+        s = np.clip(s, 0, 255).astype(hsv.dtype)
+        hsv = cv.merge((h, s, v))
+        bgr = HSV2BGR(hsv)
+    return bgr
+
+
+def RandomHue(bgr):
+    if random.random() < 0.5:
+        hsv = BGR2HSV(bgr)
+        h, s, v = cv.split(hsv)
+        adjust = random.choice([0.5, 1.5])
+        h = h * adjust
+        h = np.clip(h, 0, 255).astype(hsv.dtype)
+        hsv = cv.merge((h, s, v))
+        bgr = HSV2BGR(hsv)
+    return bgr
+
+
+def randomBlur(bgr):
+    return cv.blur(bgr, (5,) * 2) if random.random() < 0.5 else bgr
+
+
+def randomShift(bgr, boxes, labels):
+    # 平移变换
+    center = (boxes[:, 2:] + boxes[:, :2]) / 2
+    if random.random() < 0.5:
+        height, width, c = bgr.shape
+        after_shift_image = np.zeros((height, width, c), dtype=bgr.dtype)
+        after_shift_image[:, :, :] = (104, 117, 123)  # bgr
+        shift_x = random.uniform(-width * 0.2, width * 0.2)
+        shift_y = random.uniform(-height * 0.2, height * 0.2)
+        # print(bgr.shape,shift_x,shift_y)
+
+        if shift_x >= 0 and shift_y >= 0:
+            after_shift_image[int(shift_y):, int(shift_x):, :] = \
+                bgr[:height - int(shift_y), :width - int(shift_x), :]
+        elif shift_x >= 0 and shift_y < 0:
+            after_shift_image[:height + int(shift_y), int(shift_x):, :] = \
+                bgr[-int(shift_y):, :width - int(shift_x), :]
+        elif shift_x < 0 and shift_y >= 0:
+            after_shift_image[int(shift_y):, :width + int(shift_x), :] = \
+                bgr[:height - int(shift_y), -int(shift_x):, :]
+        elif shift_x < 0 and shift_y < 0:
+            after_shift_image[:height + int(shift_y), :width + int(shift_x), :] = \
+                bgr[-int(shift_y):, - int(shift_x):, :]
+
+        shift_xy = torch.FloatTensor([[int(shift_x), int(shift_y)]]).expand_as(center)
+        center = center + shift_xy
+        mask1 = (center[:, 0] > 0) & (center[:, 0] < width)
+        mask2 = (center[:, 1] > 0) & (center[:, 1] < height)
+        mask = (mask1 & mask2).view(-1, 1)
+        boxes_in = boxes[mask.expand_as(boxes)].view(-1, 4)
+
+        if len(boxes_in) == 0:
+            return bgr, boxes, labels
+        box_shift = torch.FloatTensor([[int(shift_x),
+                                        int(shift_y),
+                                        int(shift_x),
+                                        int(shift_y)]]).expand_as(boxes_in)
+        boxes_in = boxes_in + box_shift
+        labels_in = labels[mask.view(-1)]
+        return after_shift_image, boxes_in, labels_in
+    return bgr, boxes, labels
+
+
+def randomScale(bgr, boxes):
+    # fix height, scale width from 0.8 to 1.2
+    if random.random() < 0.5:
+        scale = random.uniform(0.8, 1.2)
+        height, width, c = bgr.shape
+        bgr = cv.resize(bgr, (int(width * scale), height))
+        scale_tensor = torch.FloatTensor([[scale, 1] * 2]).expand_as(boxes)
+        boxes *= scale_tensor
+    return bgr, boxes
+
+
+def randomCrop(bgr, boxes, labels):
+    if random.random() < 0.5:
+        center = (boxes[:, 2:] + boxes[:, :2]) / 2
+        height, width, c = bgr.shape
+        h = random.uniform(0.6 * height, height)
+        w = random.uniform(0.6 * width, width)
+        x = random.uniform(0, width - w)
+        y = random.uniform(0, height - h)
+        x, y, h, w = int(x), int(y), int(h), int(w)
+
+        center = center - torch.FloatTensor([[x, y]]).expand_as(center)
+        mask1 = (center[:, 0] > 0) & (center[:, 0] < w)
+        mask2 = (center[:, 1] > 0) & (center[:, 1] < h)
+        mask = (mask1 & mask2).view(-1, 1)
+
+        boxes_in = boxes[mask.expand_as(boxes)].view(-1, 4)
+        if len(boxes_in) == 0:
+            return bgr, boxes, labels
+        box_shift = torch.FloatTensor([[x, y] * 2]).expand_as(boxes_in)
+
+        boxes_in = boxes_in - box_shift
+        boxes_in[:, 0] = boxes_in[:, 0].clamp_(min=0, max=w)
+        boxes_in[:, 2] = boxes_in[:, 2].clamp_(min=0, max=w)
+        boxes_in[:, 1] = boxes_in[:, 1].clamp_(min=0, max=h)
+        boxes_in[:, 3] = boxes_in[:, 3].clamp_(min=0, max=h)
+
+        labels_in = labels[mask.view(-1)]
+        img_cropped = bgr[y:y + h, x:x + w, :]
+        return img_cropped, boxes_in, labels_in
+    return bgr, boxes, labels
+
+
+def subMean(bgr, mean):
+    mean = np.array(mean, dtype=np.float32)
+    bgr = bgr - mean
+    return bgr
+
+
+def random_flip(im, boxes):
+    if random.random() < 0.5:
+        im_lr = np.fliplr(im).copy()
+        h, w, _ = im.shape
+        xmin = w - boxes[:, 2]
+        xmax = w - boxes[:, 0]
+        boxes[:, 0] = xmin
+        boxes[:, 2] = xmax
+        return im_lr, boxes
+    return im, boxes
+
+
+def random_bright(im, delta=16):
+    alpha = random.random()
+    if alpha > 0.3:
+        im = im * alpha + random.randrange(-delta, delta)
+        im = im.clip(min=0, max=255).astype(np.uint8)
+    return im
+
+
+def encoder(boxes, labels):
+    """
+    implement the encoder
+    boxes (tensor) [[x1,y1,x2,y2],[]]
+    labels (tensor) [...]
+    return 14 x 14 x 30
+    """
+
+    grid_num = 14
+    target = torch.zeros((grid_num,) * 2 + (30,))
+    cell_size = 1. / grid_num
+    wh = boxes[:, 2:] - boxes[:, :2]
+    cxcy = (boxes[:, 2:] + boxes[:, :2]) / 2
+
+    for i in range(cxcy.size()[0]):
+        cxcy_sample = cxcy[i]
+        ij = (cxcy_sample / cell_size).ceil() - 1
+
+        target[int(ij[1]), int(ij[0]), 4] = 1
+        target[int(ij[1]), int(ij[0]), 9] = 1
+        target[int(ij[1]), int(ij[0]), int(labels[i]) + 9] = 1
+
+        # relative up-left coordinates of matched cell
+        xy = ij * cell_size
+        delta_xy = (cxcy_sample - xy) / cell_size
+
+        target[int(ij[1]), int(ij[0]), 2:4] = wh[i]
+        target[int(ij[1]), int(ij[0]), :2] = delta_xy
+        target[int(ij[1]), int(ij[0]), 7:9] = wh[i]
+        target[int(ij[1]), int(ij[0]), 5:7] = delta_xy
+    return target
+
+
 class yoloDataset(data.Dataset):
     image_size = 448
 
     def __init__(self, root, list_file, train, transform):
+        cv.setNumThreads(0)
+        cv.ocl.setUseOpenCL(False)
+
         print('data init')
         self.root = root
         self.train = train
@@ -25,21 +225,15 @@ class yoloDataset(data.Dataset):
         self.labels = []
         self.mean = (123, 117, 104)  # RGB
 
-        if isinstance(list_file, list):
-            # Cat multiple list files together.
-            # This is especially useful for voc07/voc12 combination.
-            tmp_file = '/tmp/list_file.txt'
-            os.system('cat %s > %s' % (' '.join(list_file), tmp_file))
-            list_file = tmp_file
+        # list_file = root + list_file
+        print(list_file)
 
-        with open(list_file) as f:
+        with open(list_file, 'r') as f:
             lines = f.readlines()
 
-        idx = 1
         for line in lines:
             split = line.strip().split()
-            self.fnames.append(str(idx).rjust(7, '0') + '.jpg')
-            idx += 1
+            self.fnames.append(split[0])
             num_boxes = (len(split) - 1) // 5
             box = []
             label = []
@@ -48,10 +242,9 @@ class yoloDataset(data.Dataset):
                 y = float(split[2 + 5 * i])
                 x2 = float(split[3 + 5 * i])
                 y2 = float(split[4 + 5 * i])
-                c = split[0 + 5 * i]
+                c = split[5 + 5 * i]
                 box.append([x, y, x2, y2])
-                # label.append(int(c) + 1)
-                label.append(int(c))
+                label.append(int(c) + 1)
             self.boxes.append(torch.Tensor(box))
             self.labels.append(torch.LongTensor(label))
         self.num_samples = len(self.boxes)
@@ -76,9 +269,9 @@ class yoloDataset(data.Dataset):
         boxes /= torch.Tensor([w, h, w, h]).expand_as(boxes)
         cv.cvtColor(img, cv.COLOR_BGR2RGB)
         # img = self.BGR2RGB(img)  # because pytorch pretrained model use RGB
-        img = self.subMean(img, self.mean)  # subtract the mean value
+        img = subMean(img, self.mean)  # subtract the mean value
         img = cv.resize(img, (self.image_size,) * 2)
-        target = self.encoder(boxes, labels)  # 7x7x30
+        target = encoder(boxes, labels)  # 7x7x30
         for t in self.transform:
             img = t(img)
 
@@ -87,184 +280,13 @@ class yoloDataset(data.Dataset):
     def __len__(self):
         return self.num_samples
 
-    def encoder(self, boxes, labels):
-        """
-        implement the encoder
-        boxes (tensor) [[x1,y1,x2,y2],[]]
-        labels (tensor) [...]
-        return 14 x 14 x 30
-        """
-
-        grid_num = 14
-        target = torch.zeros((grid_num,) * 2 + (30,))
-        cell_size = 1. / grid_num
-        wh = boxes[:, 2:] - boxes[:, :2]
-        cxcy = (boxes[:, 2:] + boxes[:, :2]) / 2
-
-        for i in range(cxcy.size()[0]):
-            cxcy_sample = cxcy[i]
-            ij = (cxcy_sample / cell_size).ceil() - 1
-
-            target[int(ij[1]), int(ij[0]), 4] = 1
-            target[int(ij[1]), int(ij[0]), 9] = 1
-            target[int(ij[1]), int(ij[0]), int(labels[i]) + 9] = 1
-
-            # relative up-left coordinates of matched cell
-            xy = ij * cell_size
-            delta_xy = (cxcy_sample - xy) / cell_size
-
-            target[int(ij[1]), int(ij[0]), 2:4] = wh[i]
-            target[int(ij[1]), int(ij[0]), :2] = delta_xy
-            target[int(ij[1]), int(ij[0]), 7:9] = wh[i]
-            target[int(ij[1]), int(ij[0]), 5:7] = delta_xy
-        return target
-
-    def BGR2RGB(self, img):
-        return cv.cvtColor(img, cv.COLOR_BGR2RGB)
-
-    def BGR2HSV(self, img):
-        return cv.cvtColor(img, cv.COLOR_BGR2HSV)
-
-    def HSV2BGR(self, img):
-        return cv.cvtColor(img, cv.COLOR_HSV2BGR)
-
-    def RandomBrightness(self, bgr):
-        if random.random() < 0.5:
-            hsv = self.BGR2HSV(bgr)
-            h, s, v = cv.split(hsv)
-            adjust = random.choice([0.5, 1.5])
-            v = v * adjust
-            v = np.clip(v, 0, 255).astype(hsv.dtype)
-            hsv = cv.merge((h, s, v))
-            bgr = self.HSV2BGR(hsv)
-        return bgr
-
-    def RandomSaturation(self, bgr):
-
-        return bgr
-
-    def RandomHue(self, bgr):
-        if random.random() < 0.5:
-            hsv = self.BGR2HSV(bgr)
-            h, s, v = cv.split(hsv)
-            adjust = random.choice([0.5, 1.5])
-            h = h * adjust
-            h = np.clip(h, 0, 255).astype(hsv.dtype)
-            hsv = cv.merge((h, s, v))
-            bgr = self.HSV2BGR(hsv)
-        return bgr
-
-    def randomBlur(self, bgr):
-
-        return bgr
-
-    def randomShift(self, bgr, boxes, labels):
-        # 平移变换
-        center = (boxes[:, 2:] + boxes[:, :2]) / 2
-        if random.random() < 0.5:
-            height, width, c = bgr.shape
-            after_shfit_image = np.zeros((height, width, c), dtype=bgr.dtype)
-            after_shfit_image[:, :, :] = (104, 117, 123)  # bgr
-            shift_x = random.uniform(-width * 0.2, width * 0.2)
-            shift_y = random.uniform(-height * 0.2, height * 0.2)
-            # print(bgr.shape,shift_x,shift_y)
-
-            if shift_x >= 0 and shift_y >= 0:
-                after_shfit_image[int(shift_y):, int(shift_x):, :] = \
-                    bgr[:height - int(shift_y), :width - int(shift_x), :]
-            elif shift_x >= 0 and shift_y < 0:
-                after_shfit_image[:height + int(shift_y), int(shift_x):, :] = \
-                    bgr[-int(shift_y):, :width - int(shift_x), :]
-            elif shift_x < 0 and shift_y >= 0:
-                after_shfit_image[int(shift_y):, :width + int(shift_x), :] = \
-                    bgr[:height - int(shift_y), -int(shift_x):, :]
-            elif shift_x < 0 and shift_y < 0:
-                after_shfit_image[:height + int(shift_y), :width + int(shift_x), :] = \
-                    bgr[-int(shift_y):, - int(shift_x):, :]
-
-            shift_xy = torch.FloatTensor([[int(shift_x), int(shift_y)]]).expand_as(center)
-            center = center + shift_xy
-            mask1 = (center[:, 0] > 0) & (center[:, 0] < width)
-            mask2 = (center[:, 1] > 0) & (center[:, 1] < height)
-            mask = (mask1 & mask2).view(-1, 1)
-            boxes_in = boxes[mask.expand_as(boxes)].view(-1, 4)
-
-            if len(boxes_in) == 0:
-                return bgr, boxes, labels
-            box_shift = torch.FloatTensor([[int(shift_x),
-                                            int(shift_y),
-                                            int(shift_x),
-                                            int(shift_y)]]).expand_as(boxes_in)
-            boxes_in = boxes_in + box_shift
-            labels_in = labels[mask.view(-1)]
-            return after_shfit_image, boxes_in, labels_in
-        return bgr, boxes, labels
-
-    def randomScale(self, bgr, boxes):
-        # 固定住高度，以0.8-1.2伸缩宽度，做图像形变
-        return bgr, boxes
-
-    def randomCrop(self, bgr, boxes, labels):
-        if random.random() < 0.5:
-            center = (boxes[:, 2:] + boxes[:, :2]) / 2
-            height, width, c = bgr.shape
-            h = random.uniform(0.6 * height, height)
-            w = random.uniform(0.6 * width, width)
-            x = random.uniform(0, width - w)
-            y = random.uniform(0, height - h)
-            x, y, h, w = int(x), int(y), int(h), int(w)
-
-            center = center - torch.FloatTensor([[x, y]]).expand_as(center)
-            mask1 = (center[:, 0] > 0) & (center[:, 0] < w)
-            mask2 = (center[:, 1] > 0) & (center[:, 1] < h)
-            mask = (mask1 & mask2).view(-1, 1)
-
-            boxes_in = boxes[mask.expand_as(boxes)].view(-1, 4)
-            if len(boxes_in) == 0:
-                return bgr, boxes, labels
-            box_shift = torch.FloatTensor([[x, y, x, y]]).expand_as(boxes_in)
-
-            boxes_in = boxes_in - box_shift
-            boxes_in[:, 0] = boxes_in[:, 0].clamp_(min=0, max=w)
-            boxes_in[:, 2] = boxes_in[:, 2].clamp_(min=0, max=w)
-            boxes_in[:, 1] = boxes_in[:, 1].clamp_(min=0, max=h)
-            boxes_in[:, 3] = boxes_in[:, 3].clamp_(min=0, max=h)
-
-            labels_in = labels[mask.view(-1)]
-            img_cropped = bgr[y:y + h, x:x + w, :]
-            return img_cropped, boxes_in, labels_in
-        return bgr, boxes, labels
-
-    def subMean(self, bgr, mean):
-        mean = np.array(mean, dtype=np.float32)
-        bgr = bgr - mean
-        return bgr
-
-    def random_flip(self, im, boxes):
-        if random.random() < 0.5:
-            im_lr = np.fliplr(im).copy()
-            h, w, _ = im.shape
-            xmin = w - boxes[:, 2]
-            xmax = w - boxes[:, 0]
-            boxes[:, 0] = xmin
-            boxes[:, 2] = xmax
-            return im_lr, boxes
-        return im, boxes
-
-    def random_bright(self, im, delta=16):
-        alpha = random.random()
-        if alpha > 0.3:
-            im = im * alpha + random.randrange(-delta, delta)
-            im = im.clip(min=0, max=255).astype(np.uint8)
-        return im
-
 
 def main():
     from torch.utils.data import DataLoader
     import torchvision.transforms as transforms
-    file_root = '../../data/VOC2007/JPEGImages/'
+    file_root = 'JPEGImages/'
     train_dataset = yoloDataset(root=file_root,
-                                list_file='../../data/VOC2007/label_train.txt',
+                                list_file='label_train.txt',
                                 train=True,
                                 transform=[transforms.ToTensor()])
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False, num_workers=0)
